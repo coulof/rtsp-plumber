@@ -1,0 +1,38 @@
+# Consumer pod, pinned to a DIFFERENT node than the publisher/server so media
+# crosses the physical path. Two containers share one network namespace
+# (and therefore the same net1 macvlan interface):
+#   - ffmpeg : pulls the stream over UDP and reports continuous read stats.
+#   - capture: netshoot sidecar for tcpdump/tshark on net1 (fragmentation +
+#              RTP loss/jitter analysis in Phase 3).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: consumer
+  namespace: rtsp-test
+  labels: { app: consumer }
+  annotations:
+    k8s.v1.cni.cncf.io/networks: macvlan-rtsp
+spec:
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions: [{ key: app, operator: In, values: [publisher, mediamtx] }]
+            topologyKey: kubernetes.io/hostname
+  containers:
+    - name: ffmpeg
+      image: bluenviron/mediamtx:latest-ffmpeg
+      # -rtsp_transport udp  -> force UDP (use udp_multicast to test multicast).
+      # Reads stream, decodes nothing to disk, prints throughput/fps + drops.
+      command: ["/bin/sh", "-c"]
+      args:
+        - >
+          ffmpeg -rtsp_transport udp -i rtsp://mediamtx:8554/cam
+          -loglevel verbose -an -c copy -f null - 2>&1
+    - name: capture
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        capabilities: { add: ["NET_ADMIN", "NET_RAW"] }

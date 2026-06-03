@@ -1,0 +1,74 @@
+# MediaMTX = lightweight RTSP server / relay. It is the piece that solves the
+# dynamic-UDP-port problem we discussed: RTP/RTCP ports are PINNED here, so the
+# flow is deterministic through the network instead of randomly negotiated.
+#
+# Two roles, switchable:
+#   - aggregator/relay for a REAL camera: set path source to the camera URL.
+#   - sink for the synthetic ffmpeg publisher (20-publisher.yaml): source=publisher.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mediamtx-config
+  namespace: rtsp-test
+data:
+  mediamtx.yml: |
+    logLevel: info
+    # ---- pinned ports (deterministic, firewall/Service friendly) ----
+    rtspAddress: :8554
+    rtpAddress: :8000
+    rtcpAddress: :8001
+    # unicast UDP is the default. To test MULTICAST RTP, add "multicast":
+    #   rtspTransports: [udp, multicast]
+    rtspTransports: [udp, tcp]
+    # multicast settings (used only when a client requests udp_multicast):
+    multicastIPRange: 239.255.0.0/24
+    multicastRTPPort: 8002
+    multicastRTCPPort: 8003
+    paths:
+      cam:
+        # OPTION A (synthetic): accept the ffmpeg publisher pod.
+        source: publisher
+        # OPTION B (real camera): comment the line above and use:
+        # source: rtsp://user:pass@CAMERA_IP:554/Streaming/Channels/101
+        # sourceProtocol: udp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediamtx
+  namespace: rtsp-test
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mediamtx } }
+  template:
+    metadata:
+      labels: { app: mediamtx }
+      # Attach net1 so the server lives on the overlay-bypass L2 too. This is
+      # required for udp_multicast and recommended for clean unicast UDP.
+      annotations:
+        k8s.v1.cni.cncf.io/networks: macvlan-rtsp
+    spec:
+      containers:
+        - name: mediamtx
+          image: bluenviron/mediamtx:latest   # verify exact tag for your arch
+          ports:
+            - { containerPort: 8554, protocol: TCP }
+            - { containerPort: 8000, protocol: UDP }
+            - { containerPort: 8001, protocol: UDP }
+          volumeMounts:
+            - { name: cfg, mountPath: /mediamtx.yml, subPath: mediamtx.yml }
+      volumes:
+        - name: cfg
+          configMap: { name: mediamtx-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamtx
+  namespace: rtsp-test
+spec:
+  selector: { app: mediamtx }
+  ports:
+    - { name: rtsp, port: 8554, protocol: TCP }
+    - { name: rtp,  port: 8000, protocol: UDP }
+    - { name: rtcp, port: 8001, protocol: UDP }

@@ -1,0 +1,36 @@
+# macvlan secondary interface (net1) for the streaming path.
+# This is the interface that BYPASSES Cilium/Calico for the video flow.
+#
+# >>> YOU MUST EDIT TWO THINGS <<<
+#   1. "master": the interface name INSIDE the RKE2 node (a Harvester VM) that
+#      sits on your Harvester VLAN/bridge network (bridge binding, NOT the
+#      masquerade management NIC). Often eth1 when you add a 2nd VM NIC.
+#   2. ipam "range"/"gateway": must be a real, free range on that L2 subnet.
+#      Use whereabouts (cluster-wide, no collisions) or host-local per node.
+#
+# Note: eth0 (Cilium/Calico) keeps the default route and all cluster traffic.
+# net1 only carries the RTSP/RTP UDP you want off the overlay.
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: macvlan-rtsp
+  namespace: rtsp-test
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "type": "macvlan",
+      "master": "eth1",
+      "mode": "bridge",
+      "ipam": {
+        "type": "whereabouts",
+        "range": "10.10.0.0/24",
+        "range_start": "10.10.0.20",
+        "range_end": "10.10.0.60",
+        "gateway": "10.10.0.1"
+      }
+    }
+# For MULTICAST you generally also want a route for the group range out net1.
+# whereabouts/macvlan can add it via "ipam.routes":
+#   "routes": [ { "dst": "224.0.0.0/4" } ]
+# or add it at runtime in the pod:  ip route add 224.0.0.0/4 dev net1

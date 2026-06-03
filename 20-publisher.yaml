@@ -1,0 +1,39 @@
+# Synthetic camera. Generates a 2K (or 4K) H.264 test pattern and publishes it
+# to MediaMTX over RTSP/UDP. Use this to validate the whole chain WITHOUT the
+# real camera; later just point the consumer at the real camera instead.
+#
+# Resolution/bitrate via env. Defaults to 2K@30 ~16 Mbps. For 4K set
+# RES=3840x2160 and BR=35M.
+#
+# Encoder is set to keep RTP packets MTU-friendly: H.264 with FU-A
+# fragmentation means video NALs are split below the link MTU by the RTP
+# packetizer, so you should NOT see IP-layer fragmentation on a correct path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: publisher
+  namespace: rtsp-test
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: publisher } }
+  template:
+    metadata:
+      labels: { app: publisher }
+    spec:
+      containers:
+        - name: ffmpeg
+          image: bluenviron/mediamtx:latest-ffmpeg  # bundles ffmpeg; or jrottenberg/ffmpeg
+          env:
+            - { name: RES, value: "2560x1440" }
+            - { name: FPS, value: "30" }
+            - { name: BR,  value: "16M" }
+            - { name: DST, value: "rtsp://mediamtx:8554/cam" }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              ffmpeg -re -f lavfi -i testsrc2=size=$RES:rate=$FPS
+              -f lavfi -i sine=frequency=1000
+              -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high
+              -pix_fmt yuv420p -b:v $BR -maxrate $BR -bufsize $BR -g $FPS
+              -c:a aac -b:a 128k
+              -f rtsp -rtsp_transport udp "$DST"

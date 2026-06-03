@@ -1,0 +1,49 @@
+# Phase 1 - raw plumbing. Two netshoot pods on DIFFERENT nodes, each with a
+# macvlan net1. netshoot ships python3/tcpdump/iperf/socat, so you can run
+# udp_probe.py with no image build. Forcing different nodes makes the packets
+# actually cross  vNIC -> Harvester bridge -> physical  instead of staying
+# inside one node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-a
+  namespace: rtsp-test
+  labels: { app: rtsp-probe }
+  annotations:
+    k8s.v1.cni.cncf.io/networks: macvlan-rtsp
+spec:
+  # spread the two probes across nodes
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions: [{ key: app, operator: In, values: [rtsp-probe] }]
+          topologyKey: kubernetes.io/hostname
+  containers:
+    - name: shell
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        capabilities: { add: ["NET_ADMIN", "NET_RAW"] }  # tcpdump + route edits
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-b
+  namespace: rtsp-test
+  labels: { app: rtsp-probe }
+  annotations:
+    k8s.v1.cni.cncf.io/networks: macvlan-rtsp
+spec:
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions: [{ key: app, operator: In, values: [rtsp-probe] }]
+          topologyKey: kubernetes.io/hostname
+  containers:
+    - name: shell
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        capabilities: { add: ["NET_ADMIN", "NET_RAW"] }
